@@ -1,0 +1,106 @@
+---
+title: "Week 4 Practical Machine Learning Project"
+author: "June Kieu"
+date: "September 2, 2019"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+The goal of this project is to predict the manner in which users did the exercise.  This is variable *classe* in training set. This report will describe my process of building the model.
+
+## Loading Data
+
+The first step is to load the data. There are cells with values of "NA" and "#DIV/0!" or missing. I decided to replace them with the median of the variables.
+
+```{r data loading}
+rm(list=ls())
+setwd("C:/Users/June Kieu/Downloads")
+getwd()
+training <- read.csv("pml-training.csv",sep = ",",na.strings=c("NA","","#DIV/0!"))
+training <- training[-c(1:8)]#taking out the first 8 columns as they are not real predictors
+testing <- read.csv("pml-testing.csv",sep = ",",na.strings=c("NA","","#DIV/0!"))
+testing <- testing[-c(1:8)]#taking out the first 8 columns as they are not real predictors
+dim(training);dim(testing)
+#Replacing all NA cells with median value of the corresponding 
+#column for both training and testing set
+for(i in 1:151){
+  training[is.na(training[,i]), i] <- median(training[,i], na.rm = TRUE)
+}
+for(i in 1:151){
+  testing[is.na(testing[,i]), i] <- median(testing[,i], na.rm = TRUE)
+}
+```
+
+## Preparing data set for modeling
+
+Training data set consists of 19,622 observations; using all of these to build the classification model is not recommended; as we cannot evaluate the model performance. Thus, I used *createDataPartition* function in package *caret* to split *training* data set into *TrainSet* and *TestSet*.
+
+Also, there are variables with no or not significant variance; I excluded those out of *TrainSet* and *TestSet*. There are only 51 independent variables brought in the model.
+
+```{r Partition}
+require(caret)
+require(ggplot2)
+inTrain <- createDataPartition(training$classe,p=.6,list = FALSE)
+TrainSet <- training[inTrain,]
+TestSet <- training[-inTrain,]
+###eliminating variables with near zero variance
+NZV <- nearZeroVar(TrainSet)
+TrainSet <- TrainSet[, -NZV]
+TestSet <- TestSet[, -NZV]
+testing1  <- testing[, -NZV]
+dim(TrainSet)
+```
+
+## Modeling Step
+
+Because the processing time for "rf" method using *caret* package is quite long, I decided to use "ranger" method instead. One of the parameters in *train* function regulates the method of cross validation, I decided to use *repeatedcv* method with 10-fold cross validations, which means dividing the data into 10 subsets, using 9 of them to train the model and 1 to test the performance. The process is repeated 3 times.
+
+Model performance is determined on *TestSet*, looking at confusion matrix, we could see that this model predicts *classe* pretty precisely: 2231/2232 (there are 2232 *actual* obs with Classe A) are predicted correctly as Classe A; similarly, 1515/1524 are predicted correctly as Classe B, 1360/1368 are predicted correctly as classe C, only 5 observations out of 1286 *actual* Classe D observations are misclassified, and this number is 4/1442 observations for classe E. Model's overall accuracy is 99.73%.
+
+```{r Model}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 3)
+RFMod <- train(classe~., 
+                    data=TrainSet, 
+                    method="ranger", 
+                    trControl=fitControl,
+               importance = "impurity")
+preRFMod <- predict(RFMod,newdata=TestSet)
+confusionMatrix(preRFMod,TestSet$classe)
+```
+
+## Important Variables
+
+pitch_forearm, yaw_belt, magnet_dumbbell_z, roll_forearm and roll_forearm are among top variables of RFMod. Below is a visualization of my model's top 20 variables and their importances. The model then is used for *testing* set to predict classe for its 20 observations.
+
+```{r VarImp, echo=FALSE}
+require(caret)
+require(e1071)
+require(dplyr)
+require(tidyverse)
+require(ggplot2)
+varImp(RFMod)
+temp<-varImp(RFMod)$importance %>% 
+  as.data.frame() %>%
+  rownames_to_column(.)%>%
+  arrange(-Overall)
+temp<-temp[(1:20),]
+ggplot(data=temp,aes(x = reorder(rowname, Overall), y = Overall))+
+  geom_col(fill="lightblue",color="blue")+
+  coord_flip()+
+  theme_bw()
+#fitting model into testing set
+preRFMod1 <- predict(RFMod,newdata=testing)
+preRFMod1
+```
+
